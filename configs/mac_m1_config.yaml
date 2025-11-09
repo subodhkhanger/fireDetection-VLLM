@@ -1,0 +1,127 @@
+# Fire-ViT Configuration for Mac M1
+# Lightweight config optimized for Mac M1 training on tiny dataset
+
+# Model Configuration (Smaller for faster training)
+model:
+  name: "Fire-ViT-Tiny"
+  input_size: [256, 256]  # Smaller image size
+  patch_size: 16
+  stride: 8
+  in_channels: 3
+
+  # Reduced model size (half of base config)
+  embed_dims: [96, 192, 384, 384]  # vs [192, 384, 768, 768]
+  num_heads: [4, 6, 8, 8]          # vs [8, 12, 16, 16]
+  num_blocks: [1, 1, 2, 1]         # vs [2, 2, 6, 2] - Total: 5 blocks
+  mlp_ratios: [4, 4, 4, 4]
+
+  # Deformable attention
+  num_sampling_points: 4
+
+  # Regularization (lighter)
+  drop_rate: 0.0
+  attn_drop_rate: 0.0
+  drop_path_rate: 0.1  # vs 0.3
+
+  # Detection head
+  fpn_channels: 128  # vs 256
+  num_classes: 2  # fire, smoke
+
+# Training Configuration (Optimized for Mac M1)
+training:
+  epochs: 50  # Shorter for quick testing
+  batch_size: 4  # Small for Mac M1 memory
+  accumulation_steps: 4  # Effective batch = 16
+  effective_batch_size: 16
+
+  # Optimizer
+  optimizer: "adamw"
+  base_lr: 5.0e-5  # Lower LR for small batch
+  weight_decay: 0.05
+
+  # Learning rate schedule
+  warmup_epochs: 2  # vs 5
+  warmup_lr: 1.0e-6
+  min_lr: 1.0e-6
+  lr_schedule: "cosine"
+
+  # EMA (disabled for speed on Mac M1)
+  use_ema: false
+  ema_decay: 0.9999
+
+  # Mixed precision (MPS doesn't support AMP yet)
+  use_amp: false
+
+  # Gradient clipping
+  clip_grad_norm: 1.0
+
+  # Augmentation (lighter for speed)
+  use_mixup: false  # Disable for speed
+  mixup_alpha: 0.2
+  use_cutmix: false  # Disable for speed
+  cutmix_alpha: 1.0
+  use_mosaic: false  # Disable for speed
+  mosaic_prob: 0.5
+
+# Loss Configuration
+loss:
+  # Loss weights (simplified)
+  focal_weight: 1.0
+  ciou_weight: 5.0
+  dice_weight: 2.0
+  attention_weight: 0.0  # Disable for speed
+  auxiliary_weight: 0.0  # Disable for speed
+
+  # Focal loss parameters
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+
+  # Label smoothing
+  label_smoothing: 0.0  # Disable for tiny dataset
+
+# Data Configuration
+data:
+  dataset_name: "FireTiny"
+  dataset_path: "./data/FireTiny"
+
+  # Splits (fixed for tiny dataset)
+  train_split: 0.5
+  val_split: 0.25
+  test_split: 0.25
+
+  # Data loading (reduced for Mac M1)
+  num_workers: 2  # vs 8
+  pin_memory: false  # MPS doesn't need pinned memory
+  prefetch_factor: 2
+
+  # Image preprocessing
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+# Logging & Checkpointing
+logging:
+  log_interval: 5  # More frequent for small dataset
+  val_interval: 5  # Validate every 5 epochs
+  save_interval: 10  # Save every 10 epochs
+
+  # Experiment tracking
+  use_tensorboard: true
+  use_wandb: false
+  wandb_project: "fire-vit-mac"
+
+  # Checkpoints
+  checkpoint_dir: "./checkpoints"
+  save_best_only: false
+  max_checkpoints: 3  # Keep only 3 checkpoints
+
+# Evaluation
+evaluation:
+  iou_thresholds: [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
+  conf_threshold: 0.3  # Lower for tiny dataset
+  nms_threshold: 0.6
+  max_detections: 100
+
+# Hardware
+device: "mps"  # Mac M1 GPU (Metal Performance Shaders)
+seed: 42
+deterministic: false  # MPS doesn't support deterministic ops yet
