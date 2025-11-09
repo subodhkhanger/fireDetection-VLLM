@@ -1,8 +1,11 @@
 # Fire-ViT: Custom Transformer-Based Fire Detection Model
 
-![Status](https://img.shields.io/badge/status-implementation%20complete-brightgreen)
-![Python](https://img.shields.io/badge/python-3.8%2B-blue)
-![PyTorch](https://img.shields.io/badge/pytorch-2.0%2B-orange)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.1+-ee4c2c.svg)](https://pytorch.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CUDA](https://img.shields.io/badge/CUDA-Supported-76B900.svg)](https://developer.nvidia.com/cuda-zone)
+[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1%2FM2%2FM3-black.svg)](https://www.apple.com/mac/)
+
 
 A state-of-the-art transformer-based model for fire and smoke detection, implementing cutting-edge computer vision techniques for environmental monitoring applications.
 
