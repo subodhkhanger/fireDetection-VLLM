@@ -88,7 +88,7 @@ Fire-ViT is a hierarchical vision transformer designed specifically for fire and
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## 🚀 Installation
+##  Installation
 
 ### Requirements
 - Python 3.8+
@@ -239,7 +239,7 @@ loss_fn = CompositeLoss(
 total_loss, loss_dict = loss_fn(predictions, targets, attention_maps, epoch=10)
 ```
 
-## 🎓 Training
+##  Training
 
 ### Quick Start Training
 
