@@ -457,7 +457,6 @@ This is a research project for DLR Computer Vision Research Position. Contributi
 - D-Fire Dataset
 - PyTorch Team
 - timm library (Ross Wightman)
-- DLR Institute of Optical Sensor Systems
 
 
 
