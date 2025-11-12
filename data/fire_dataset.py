@@ -158,16 +158,25 @@ class FireDetectionDataset(Dataset):
         img_id = img_info['id']
         anns = self.annotations.get(img_id, [])
 
+        # Get image dimensions for normalization
+        img_height, img_width = image.shape[:2]
+
         # Extract boxes and labels
         boxes = []
         labels = []
         for ann in anns:
-            bbox = ann['bbox']  # [x, y, w, h] in COCO format
+            bbox = ann['bbox']  # [x, y, w, h] in COCO format (PIXEL coordinates)
             category_id = ann['category_id']
 
-            # Clip bounding box coordinates to valid range [0, 1]
-            # to handle floating point precision errors in annotations
+            # Normalize bounding box coordinates to [0, 1] range
+            # Annotations are in PIXEL coordinates, need to normalize them
             x, y, w, h = bbox
+            x = x / img_width
+            y = y / img_height
+            w = w / img_width
+            h = h / img_height
+
+            # Clip to valid range [0, 1] to handle floating point errors
             x = max(0.0, min(1.0, x))
             y = max(0.0, min(1.0, y))
             # Ensure x+w and y+h don't exceed 1.0
