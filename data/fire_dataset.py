@@ -194,7 +194,10 @@ class FireDetectionDataset(Dataset):
                 continue
 
             boxes.append([x, y, w, h])
-            labels.append(category_id)
+            # Remap class IDs from 1,2 to 0,1 for model compatibility
+            # Dataset uses: 1=fire, 2=smoke
+            # Model expects: 0=fire, 1=smoke
+            labels.append(category_id - 1)
 
         # Handle empty annotations
         if len(boxes) == 0:
