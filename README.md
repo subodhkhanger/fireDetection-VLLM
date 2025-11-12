@@ -338,9 +338,6 @@ FireDetection/
 ├── test_model.py                 # Comprehensive tests
 ├── requirements.txt              # Dependencies
 ├── README.md                     # This file
-├── SKILLS.md                     # Step-by-step guide
-├── TRAINING_GUIDE.md             # Complete training guide
-└── IMPLEMENTATION_SUMMARY.md     # Implementation status
 ```
 
 ##  Testing
