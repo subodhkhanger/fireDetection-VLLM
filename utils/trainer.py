@@ -105,15 +105,15 @@ class Trainer:
         # Mixed precision scaler
         self.scaler = GradScaler() if use_amp else None
 
-        # EMA
+        # Move model to device BEFORE initializing EMA
+        self.model.to(device)
+
+        # EMA (initialized after model is on device)
         self.use_ema = use_ema
         if use_ema:
             self.ema = EMA(model, decay=ema_decay)
         else:
             self.ema = None
-
-        # Move model to device
-        self.model.to(device)
 
     def train_epoch(self, train_loader, epoch):
         """

@@ -159,7 +159,26 @@ class FireDetectionDataset(Dataset):
             bbox = ann['bbox']  # [x, y, w, h] in COCO format
             category_id = ann['category_id']
 
-            boxes.append(bbox)
+            # Clip bounding box coordinates to valid range [0, 1]
+            # to handle floating point precision errors in annotations
+            x, y, w, h = bbox
+            x = max(0.0, min(1.0, x))
+            y = max(0.0, min(1.0, y))
+            # Ensure x+w and y+h don't exceed 1.0
+            w = min(w, 1.0 - x)
+            h = min(h, 1.0 - y)
+
+            # Skip invalid/degenerate bounding boxes
+            # Require minimum size of 0.001 (0.1% of image dimension) for both width and height
+            # and minimum area of 0.00001 (0.001% of image area) to filter out annotation errors
+            min_size = 0.001
+            min_area = 0.00001
+            area = w * h
+
+            if w < min_size or h < min_size or area < min_area:
+                continue
+
+            boxes.append([x, y, w, h])
             labels.append(category_id)
 
         # Handle empty annotations
@@ -268,7 +287,7 @@ def create_dataloaders(
     Create train, validation, and test dataloaders
 
     Args:
-        data_dir (str): Root directory containing images
+        data_dir (str): Root directory containing images (can be overridden by annotation file location)
         train_annotation (str): Path to train annotations
         val_annotation (str): Path to val annotations
         test_annotation (str): Path to test annotations (optional)
@@ -282,9 +301,14 @@ def create_dataloaders(
     """
     from .augmentations import get_train_transforms, get_val_transforms
 
+    # Infer image directories from annotation file paths
+    # If annotation is at path/to/train/_annotations.coco.json, images are at path/to/train/
+    train_img_dir = Path(train_annotation).parent
+    val_img_dir = Path(val_annotation).parent
+
     # Create datasets
     train_dataset = FireDetectionDataset(
-        image_dir=data_dir,
+        image_dir=train_img_dir,
         annotation_file=train_annotation,
         transform=get_train_transforms(img_size),
         mode='train',
@@ -292,7 +316,7 @@ def create_dataloaders(
     )
 
     val_dataset = FireDetectionDataset(
-        image_dir=data_dir,
+        image_dir=val_img_dir,
         annotation_file=val_annotation,
         transform=get_val_transforms(img_size),
         mode='val',
@@ -326,8 +350,9 @@ def create_dataloaders(
 
     # Optional test loader
     if test_annotation is not None:
+        test_img_dir = Path(test_annotation).parent
         test_dataset = FireDetectionDataset(
-            image_dir=data_dir,
+            image_dir=test_img_dir,
             annotation_file=test_annotation,
             transform=get_val_transforms(img_size),
             mode='test',
