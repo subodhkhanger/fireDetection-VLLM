@@ -28,7 +28,7 @@ model:
 
 # Training Configuration
 training:
-  epochs: 300
+  epochs: 7
   batch_size: 32
   accumulation_steps: 4
   effective_batch_size: 128  # batch_size * accumulation_steps
