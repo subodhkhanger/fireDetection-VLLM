@@ -80,13 +80,24 @@ loss:
 
 # Data Configuration
 data:
-  dataset_name: "D-Fire"
-  dataset_path: "./data/D-Fire"
+  dataset_name: "Roboflow-Fire"
+  dataset_path: "./data/fire-detection/fire-and-smoke-detection-2"
+  
+  # Annotation paths
+  train_annotation: "./data/fire-detection/fire-and-smoke-detection-2/train/_annotations.coco.json"
+  val_annotation: "./data/fire-detection/fire-and-smoke-detection-2/valid/_annotations.coco.json"
+  test_annotation: "./data/fire-detection/fire-and-smoke-detection-2/test/_annotations.coco.json"
+  
+  # Image directories
+  train_images: "./data/fire-detection/fire-and-smoke-detection-2/train"
+  val_images: "./data/fire-detection/fire-and-smoke-detection-2/valid"
+  test_images: "./data/fire-detection/fire-and-smoke-detection-2/test"
 
-  # Splits
-  train_split: 0.8
-  val_split: 0.1
-  test_split: 0.1
+
+  # # Splits
+  # train_split: 0.8
+  # val_split: 0.1
+  # test_split: 0.1
 
   # Data loading
   num_workers: 8
