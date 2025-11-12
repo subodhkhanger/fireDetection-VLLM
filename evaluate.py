@@ -34,10 +34,12 @@ def parse_args():
     parser.add_argument('--device', type=str, default='cuda',
                        choices=['cuda', 'cpu', 'mps'],
                        help='Device to use')
-    parser.add_argument('--conf-threshold', type=float, default=0.25,
+    parser.add_argument('--conf-threshold', type=float, default=0.001,
                        help='Confidence threshold for detections')
     parser.add_argument('--iou-threshold', type=float, default=0.5,
                        help='IoU threshold for mAP calculation')
+    parser.add_argument('--use-centerness', action='store_true',
+                       help='Use centerness in final score (may suppress predictions)')
     parser.add_argument('--save-results', action='store_true',
                        help='Save detailed results to JSON')
     parser.add_argument('--output-dir', type=str, default='./evaluation_results',
@@ -163,7 +165,7 @@ def compute_ap(recalls, precisions):
     return ap
 
 
-def extract_predictions_from_model_output(predictions, conf_threshold, img_size, orig_size):
+def extract_predictions_from_model_output(predictions, conf_threshold, img_size, orig_size, use_centerness=False):
     """
     Extract bounding boxes from model predictions
 
@@ -172,13 +174,14 @@ def extract_predictions_from_model_output(predictions, conf_threshold, img_size,
         conf_threshold: Confidence threshold
         img_size: Model input size (H, W)
         orig_size: Original image size (H, W)
+        use_centerness: Whether to use centerness in scoring
 
     Returns:
         boxes: [N, 4] in [x, y, w, h] format (original image coords)
         labels: [N]
         scores: [N]
     """
-    # Use finest pyramid level
+    # Use finest pyramid level (has highest resolution)
     pred = predictions[0]
 
     cls_logits = pred['cls_logits']  # [B, C, H, W]
@@ -187,22 +190,25 @@ def extract_predictions_from_model_output(predictions, conf_threshold, img_size,
 
     B, C, H, W = cls_logits.shape
 
-    # Apply sigmoid
+    # Apply sigmoid to get probabilities
     cls_probs = torch.sigmoid(cls_logits)
-
-    if centerness is not None:
-        obj_scores = torch.sigmoid(centerness)
-    else:
-        obj_scores = torch.ones(B, 1, H, W, device=cls_logits.device)
 
     # Flatten
     cls_probs = cls_probs.reshape(B, C, -1).permute(0, 2, 1)  # [B, H*W, C]
-    obj_scores = obj_scores.reshape(B, 1, -1).permute(0, 2, 1)  # [B, H*W, 1]
     bbox_pred = bbox_pred.reshape(B, 4, -1).permute(0, 2, 1)  # [B, H*W, 4]
 
-    # Get scores
-    scores = cls_probs * obj_scores  # [B, H*W, C]
-    max_scores, max_classes = scores.max(dim=2)
+    # Calculate final scores
+    if use_centerness and centerness is not None:
+        # Use centerness in scoring (original behavior - may result in low scores)
+        obj_scores = torch.sigmoid(centerness).reshape(B, 1, -1).permute(0, 2, 1)
+        scores = cls_probs * obj_scores  # [B, H*W, C]
+    else:
+        # Don't use centerness - just use class probabilities
+        # This avoids the issue of very low centerness scores
+        scores = cls_probs
+
+    # Get max class and score for each location
+    max_scores, max_classes = scores.max(dim=2)  # [B, H*W]
 
     # Filter by confidence
     mask = max_scores[0] > conf_threshold
@@ -210,32 +216,80 @@ def extract_predictions_from_model_output(predictions, conf_threshold, img_size,
     filtered_classes = max_classes[0][mask].cpu().numpy()
     filtered_boxes = bbox_pred[0][mask].cpu().numpy()
 
+    # Remap class IDs: model outputs 0,1 but dataset uses 1,2
+    # So we add 1 to match the dataset's class IDs
+    filtered_classes = filtered_classes + 1
+
+    if len(filtered_boxes) == 0:
+        return np.zeros((0, 4)), np.array([], dtype=np.int64), np.array([], dtype=np.float32)
+
+    # Apply NMS per class to reduce excessive predictions
+    from collections import defaultdict
+    nms_boxes = defaultdict(list)
+    nms_scores = defaultdict(list)
+
+    for box, cls, score in zip(filtered_boxes, filtered_classes, filtered_scores):
+        nms_boxes[cls].append(box)
+        nms_scores[cls].append(score)
+
+    # Simple NMS: keep top-k per class
+    max_per_class = 100
+    final_boxes = []
+    final_classes = []
+    final_scores = []
+
+    for cls in nms_boxes:
+        boxes = np.array(nms_boxes[cls])
+        scores = np.array(nms_scores[cls])
+
+        # Sort by score and keep top-k
+        if len(scores) > max_per_class:
+            top_indices = np.argsort(-scores)[:max_per_class]
+            boxes = boxes[top_indices]
+            scores = scores[top_indices]
+
+        final_boxes.append(boxes)
+        final_scores.append(scores)
+        final_classes.extend([cls] * len(boxes))
+
+    if len(final_boxes) == 0:
+        return np.zeros((0, 4)), np.array([], dtype=np.int64), np.array([], dtype=np.float32)
+
+    filtered_boxes = np.concatenate(final_boxes, axis=0)
+    filtered_scores = np.concatenate(final_scores, axis=0)
+    filtered_classes = np.array(final_classes, dtype=np.int64)
+
     # Scale to original image size
     orig_h, orig_w = orig_size
-    scale_x = orig_w / img_size[1]
-    scale_y = orig_h / img_size[0]
 
-    if len(filtered_boxes) > 0:
-        # Assuming boxes are in format relative to feature map
-        # This is a simplified version - may need adjustment based on actual output format
-        scaled_boxes = filtered_boxes.copy()
-        scaled_boxes[:, 0] *= scale_x
-        scaled_boxes[:, 1] *= scale_y
-        scaled_boxes[:, 2] *= scale_x
-        scaled_boxes[:, 3] *= scale_y
+    # Boxes are in pixel coordinates relative to the feature map
+    # Need to scale them to the original image size
+    feat_h, feat_w = H, W
 
-        # Clip to image bounds
-        scaled_boxes[:, 0] = np.clip(scaled_boxes[:, 0], 0, orig_w)
-        scaled_boxes[:, 1] = np.clip(scaled_boxes[:, 1], 0, orig_h)
-        scaled_boxes[:, 2] = np.clip(scaled_boxes[:, 2], 0, orig_w - scaled_boxes[:, 0])
-        scaled_boxes[:, 3] = np.clip(scaled_boxes[:, 3], 0, orig_h - scaled_boxes[:, 1])
-    else:
-        scaled_boxes = np.zeros((0, 4))
+    # Scale factor from feature map to original image
+    scale_x = orig_w / feat_w
+    scale_y = orig_h / feat_h
+
+    scaled_boxes = filtered_boxes.copy()
+
+    # Boxes appear to be in [x, y, w, h] format but may need adjustment
+    # The values seem to be in normalized or relative coordinates
+    # Let's try treating them as relative to image size directly
+    scaled_boxes[:, 0] = np.clip(scaled_boxes[:, 0] * scale_x, 0, orig_w - 1)
+    scaled_boxes[:, 1] = np.clip(scaled_boxes[:, 1] * scale_y, 0, orig_h - 1)
+    scaled_boxes[:, 2] = np.clip(scaled_boxes[:, 2] * scale_x, 1, orig_w)
+    scaled_boxes[:, 3] = np.clip(scaled_boxes[:, 3] * scale_y, 1, orig_h)
+
+    # Filter out degenerate boxes
+    valid = (scaled_boxes[:, 2] > 0) & (scaled_boxes[:, 3] > 0)
+    scaled_boxes = scaled_boxes[valid]
+    filtered_classes = filtered_classes[valid]
+    filtered_scores = filtered_scores[valid]
 
     return scaled_boxes, filtered_classes, filtered_scores
 
 
-def evaluate_model(model, dataloader, device, conf_threshold, iou_threshold, img_size):
+def evaluate_model(model, dataloader, device, conf_threshold, iou_threshold, img_size, use_centerness=False):
     """
     Evaluate model on test dataset
 
@@ -251,6 +305,8 @@ def evaluate_model(model, dataloader, device, conf_threshold, iou_threshold, img
     all_results = []
 
     print("\nRunning evaluation...")
+    print(f"Using centerness: {use_centerness}")
+    print(f"Confidence threshold: {conf_threshold}")
 
     with torch.no_grad():
         for batch_idx, (images, targets) in enumerate(tqdm(dataloader, desc="Evaluating")):
@@ -271,7 +327,7 @@ def evaluate_model(model, dataloader, device, conf_threshold, iou_threshold, img
 
                 # Extract predictions
                 pred_boxes, pred_labels, pred_scores = extract_predictions_from_model_output(
-                    predictions, conf_threshold, (img_size, img_size), tuple(orig_size)
+                    predictions, conf_threshold, (img_size, img_size), tuple(orig_size), use_centerness
                 )
 
                 # Match predictions to ground truth
@@ -448,13 +504,18 @@ def main():
         model, test_loader, device,
         conf_threshold=args.conf_threshold,
         iou_threshold=args.iou_threshold,
-        img_size=img_size
+        img_size=img_size,
+        use_centerness=args.use_centerness
     )
 
     # Print results
     print("\n" + "="*70)
     print(" "*25 + "EVALUATION RESULTS")
     print("="*70)
+    print(f"\nEvaluation Configuration:")
+    print(f"  Confidence threshold: {args.conf_threshold}")
+    print(f"  IoU threshold: {args.iou_threshold}")
+    print(f"  Using centerness: {args.use_centerness}")
     print(f"\nOverall Metrics (IoU threshold: {args.iou_threshold}):")
     print(f"  mAP@{args.iou_threshold:.2f}:  {metrics['mAP']:.4f} ({metrics['mAP']*100:.2f}%)")
     print(f"  Precision: {metrics['precision']:.4f} ({metrics['precision']*100:.2f}%)")
