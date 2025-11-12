@@ -89,6 +89,10 @@ class AttentionRegularizationLoss(nn.Module):
         mask_area = masks_resized.sum(dim=(-2, -1)).clamp(min=1e-6)  # [B, H]
         normalized_overlap = overlap / mask_area
 
+        # Clamp to [0, 1] to prevent negative loss when overlap > mask_area
+        # This can happen when attention is highly concentrated on fire regions
+        normalized_overlap = normalized_overlap.clamp(max=1.0)
+
         # Negative log to maximize overlap
         # Add small epsilon to avoid log(0)
         loss = -(normalized_overlap + 1e-6).log()

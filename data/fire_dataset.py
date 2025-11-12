@@ -16,6 +16,12 @@ from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+import warnings
+
+# Suppress specific numpy warnings from albumentations during augmentation
+# This warning occurs when CoarseDropout calculates visibility ratios for tiny boxes
+warnings.filterwarnings('ignore', category=RuntimeWarning,
+                       message='invalid value encountered in divide')
 
 
 class FireDetectionDataset(Dataset):
