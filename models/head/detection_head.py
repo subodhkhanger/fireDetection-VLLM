@@ -120,10 +120,11 @@ class FireDetectionHead(nn.Module):
         nn.init.constant_(self.cls_head[-1].bias, bias_value)
 
         # CRITICAL: Initialize bbox head bias for Softplus activation
-        # Softplus(x) ≈ x for large x (x > 10)
-        # bias=50 → Softplus(50) ≈ 50 pixels (good starting point)
-        # This matches typical LTRB values of 50-100 pixels
-        nn.init.constant_(self.bbox_head[-1].bias, 50.0)
+        # LTRB targets are now NORMALIZED BY STRIDE in target encoder
+        # For stride=8: LTRB ∈ [0, 80], for stride=64: LTRB ∈ [0, 10]
+        # Use bias=6.0 so Softplus(6) ≈ 6.3 (reasonable starting point)
+        # This matches typical normalized LTRB values across all levels
+        nn.init.constant_(self.bbox_head[-1].bias, 6.0)
 
     def forward(self, features, level_idx=0):
         """
@@ -263,13 +264,14 @@ def generate_anchor_points(feature_map_size, stride, device='cpu'):
     return anchor_points
 
 
-def bbox_pred_to_boxes(bbox_pred, anchor_points):
+def bbox_pred_to_boxes(bbox_pred, anchor_points, stride=1):
     """
     Convert bbox predictions to actual boxes
 
     Args:
-        bbox_pred: [B, 4, H, W] predicted (l, t, r, b) distances
-        anchor_points: [H*W, 2] anchor point coordinates
+        bbox_pred: [B, 4, H, W] predicted (l, t, r, b) distances (NORMALIZED by stride)
+        anchor_points: [H*W, 2] anchor point coordinates (in pixel space)
+        stride: Stride of this FPN level for denormalization
 
     Returns:
         boxes: [B, H*W, 4] predicted boxes in (x1, y1, x2, y2) format
@@ -279,7 +281,12 @@ def bbox_pred_to_boxes(bbox_pred, anchor_points):
     # Reshape predictions: [B, 4, H, W] -> [B, H*W, 4]
     bbox_pred = bbox_pred.permute(0, 2, 3, 1).reshape(B, -1, 4)
 
-    # Extract l, t, r, b
+    # CRITICAL: Denormalize predictions by stride
+    # Targets were normalized (LTRB / stride), so we need to multiply back
+    # Without this, boxes are 8-64x too small!
+    bbox_pred = bbox_pred * stride
+
+    # Extract l, t, r, b (now in pixel space)
     l = bbox_pred[:, :, 0]
     t = bbox_pred[:, :, 1]
     r = bbox_pred[:, :, 2]
@@ -369,7 +376,7 @@ if __name__ == "__main__":
     # Test bbox conversion
     print("\n4. Testing Bbox Prediction to Boxes:")
     bbox_pred = predictions['bbox_pred']
-    boxes = bbox_pred_to_boxes(bbox_pred, anchor_points)
+    boxes = bbox_pred_to_boxes(bbox_pred, anchor_points, stride=8)
     print(f"   Converted boxes shape: {boxes.shape}")
     print(f"   Sample boxes: {boxes[0, :3]}")
 

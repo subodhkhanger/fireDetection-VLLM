@@ -69,12 +69,12 @@ loss:
   focal_weight: 1.0
   ciou_weight: 0.5  # Dramatically reduced for gradient stability with L1 loss
   attention_weight: 0.0  # Disabled initially for stability
-  dice_weight: 0.5  # Reduced from 2.0 for stability
+  dice_weight: 0.0  # DISABLED - can cause gradient explosion
   auxiliary_weight: 0.5
 
-  # Focal loss parameters
+  # Focal loss parameters - REDUCED GAMMA FOR STABILITY
   focal_alpha: 0.25
-  focal_gamma: 2.0
+  focal_gamma: 0.5  # Reduced from 2.0 - closer to cross-entropy
 
   # Label smoothing
   label_smoothing: 0.1
@@ -128,8 +128,8 @@ logging:
 # Evaluation
 evaluation:
   iou_thresholds: [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
-  conf_threshold: 0.001
-  nms_threshold: 0.6
+  conf_threshold: 0.4  # FIXED: Was 0.001 (way too low), now 0.4 for quality detections
+  nms_threshold: 0.65  # Slightly increased to reduce overlapping boxes
   max_detections: 100
 
 # Hardware

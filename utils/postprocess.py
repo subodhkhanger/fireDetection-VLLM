@@ -25,8 +25,8 @@ def decode_predictions(
     img_size: Union[Sequence[int], int],
     conf_threshold: float = 0.4,
     nms_threshold: float = 0.5,
-    topk: Union[int, None] = 300,
-    max_detections: Union[int, None] = 300,
+    topk: Union[int, None] = 200,  # Reduced from 300 to limit candidates
+    max_detections: Union[int, None] = 100,  # Reduced from 300 for cleaner output
     strides: Union[Sequence[int], None] = None,
 ) -> List[dict]:
     """
@@ -95,7 +95,8 @@ def decode_predictions(
 
             scores = cls_probs * centerness_probs  # [1, HW, C]
 
-            boxes = bbox_pred_to_boxes(bbox_pred, anchor_cache[level_idx])[0]
+            # CRITICAL: Pass stride for denormalization (targets are normalized by stride)
+            boxes = bbox_pred_to_boxes(bbox_pred, anchor_cache[level_idx], stride=strides[level_idx])[0]
             boxes[:, 0].clamp_(0, img_w)
             boxes[:, 2].clamp_(0, img_w)
             boxes[:, 1].clamp_(0, img_h)

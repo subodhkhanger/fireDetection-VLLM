@@ -110,7 +110,10 @@ class FCOSTargetEncoder:
 
                     assigned_area[update_mask] = area
                     cls_assign[update_mask] = cls_target
-                    box_assign[update_mask] = ltrb[update_mask]
+                    # CRITICAL: Normalize LTRB by stride to match model's scale
+                    # Without this, targets are 0-640 pixels but predictions are ~50
+                    # With normalization: targets become 0-80 (stride 8) to 0-10 (stride 64)
+                    box_assign[update_mask] = ltrb[update_mask] / stride
                     centerness_assign[update_mask] = self._compute_centerness(ltrb[update_mask])
 
                 cls_map = cls_assign.view(H, W)
