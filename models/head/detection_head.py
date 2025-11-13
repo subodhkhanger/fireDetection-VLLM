@@ -119,6 +119,11 @@ class FireDetectionHead(nn.Module):
         bias_value = -math.log((1 - prior_prob) / prior_prob)
         nn.init.constant_(self.cls_head[-1].bias, bias_value)
 
+        # CRITICAL: Initialize bbox head bias to negative values
+        # This ensures exp(bbox_pred) starts small (around 1-10 pixels)
+        # exp(-2.3) ≈ 0.1, exp(-1.0) ≈ 0.37, exp(0) = 1
+        nn.init.constant_(self.bbox_head[-1].bias, -2.0)
+
     def forward(self, features, level_idx=0):
         """
         Forward pass for a single feature level
@@ -141,6 +146,10 @@ class FireDetectionHead(nn.Module):
 
         # Bounding box predictions
         bbox_pred = self.bbox_head(x)  # [B, 4, H, W]
+
+        # Clamp before exp to prevent extreme values
+        # Allows bbox sizes from ~0.05 to ~1096 pixels
+        bbox_pred = torch.clamp(bbox_pred, min=-3.0, max=7.0)
 
         # Apply exponential to ensure positive box dimensions
         bbox_pred = torch.exp(bbox_pred)
