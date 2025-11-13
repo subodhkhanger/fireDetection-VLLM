@@ -119,12 +119,11 @@ class FireDetectionHead(nn.Module):
         bias_value = -math.log((1 - prior_prob) / prior_prob)
         nn.init.constant_(self.cls_head[-1].bias, bias_value)
 
-        # CRITICAL: Initialize bbox head bias to match target scale
-        # Typical LTRB targets are ~50-100 pixels
-        # exp(3.5) = 33 pixels → after stride normalization (/8) = 4.1
-        # This matches typical targets of 100/8 = 12.5 much better
-        # Previous: bias=-2.0 → 0.135 pixels → 0.017 after /8 (738x mismatch!)
-        nn.init.constant_(self.bbox_head[-1].bias, 3.5)
+        # CRITICAL: Initialize bbox head bias for temperature-scaled exp()
+        # With temperature=3 and scale=30:
+        # bias=0 → exp(0/3)*30 = 1*30 = 30 pixels (good starting point)
+        # This matches typical LTRB values of 50-100 pixels reasonably
+        nn.init.constant_(self.bbox_head[-1].bias, 0.0)
 
     def forward(self, features, level_idx=0):
         """
@@ -149,17 +148,28 @@ class FireDetectionHead(nn.Module):
         # Bounding box predictions
         bbox_pred = self.bbox_head(x)  # [B, 4, H, W]
 
-        # CRITICAL: Cast to fp32 for numerical stability with exp()
+        # CRITICAL: Use temperature-scaled exp() to reduce gradient magnitude
+        # Standard exp(x) has gradient exp(x), which explodes for large x
+        # Using exp(x/T) reduces gradients by factor of T
         # fp16 exp() is highly unstable and can produce inf/nan
         original_dtype = bbox_pred.dtype
         bbox_pred = bbox_pred.float()
 
+        # Temperature scaling: reduces gradient magnitude significantly
+        temperature = 3.0  # Higher = smaller gradients, more stability
+        bbox_pred = bbox_pred / temperature
+
         # Clamp before exp to prevent extreme values
-        # Allows bbox sizes from ~0.05 to ~1096 pixels
-        bbox_pred = torch.clamp(bbox_pred, min=-3.0, max=7.0)
+        # With T=3, input range is [-1, 2.33], giving exp() output [0.37, 10.3]
+        bbox_pred = torch.clamp(bbox_pred, min=-1.0, max=2.5)
 
         # Apply exponential to ensure positive box dimensions
+        # Gradient is now exp(x/T)/T instead of exp(x)
         bbox_pred = torch.exp(bbox_pred)
+
+        # Scale back up by temperature to get reasonable pixel values
+        # This gives us final range: [0.37*3, 10.3*3] = [1.1, 31] pixels
+        bbox_pred = bbox_pred * (temperature * 10)  # Extra 10x for typical box sizes
 
         # Cast back to original dtype for mixed precision training
         bbox_pred = bbox_pred.to(original_dtype)

@@ -125,28 +125,19 @@ class CompositeLoss(nn.Module):
             pos_mask_flat = pos_mask.reshape(-1)
 
             if pos_mask_flat.any():
-                # Get stride for this level
-                stride = self.strides[level_idx] if level_idx < len(self.strides) else self.strides[-1]
-
                 pred_ltrb = bbox_pred.permute(0, 2, 3, 1).reshape(-1, 4)
                 target_ltrb = bbox_targets.permute(0, 2, 3, 1).reshape(-1, 4)
 
-                # CRITICAL FIX: Normalize predictions by stride
-                # This makes predictions stride-relative (not pixel-absolute)
-                # Target LTRB is in pixels, pred LTRB after exp() is ~0.1-1000
-                # Dividing pred by stride brings them to similar scale as targets/stride
-                # Cast to fp32 for numerical stability (fp16 division can be unstable)
-                pred_ltrb_fp32 = pred_ltrb.float()
-                target_ltrb_fp32 = target_ltrb.float()
-                pred_ltrb_normalized = pred_ltrb_fp32 / float(stride)
-                target_ltrb_normalized = target_ltrb_fp32 / float(stride)
+                # Cast to fp32 for numerical stability
+                pred_ltrb = pred_ltrb.float()
+                target_ltrb = target_ltrb.float()
 
                 anchor = anchor_points.reshape(-1, 2)
                 B = bbox_pred.shape[0]
                 anchor = anchor.unsqueeze(0).repeat(B, 1, 1).reshape(-1, 2)
 
-                pred_boxes = self._ltrb_to_xyxy(pred_ltrb_normalized[pos_mask_flat], anchor[pos_mask_flat])
-                target_boxes = self._ltrb_to_xyxy(target_ltrb_normalized[pos_mask_flat], anchor[pos_mask_flat])
+                pred_boxes = self._ltrb_to_xyxy(pred_ltrb[pos_mask_flat], anchor[pos_mask_flat])
+                target_boxes = self._ltrb_to_xyxy(target_ltrb[pos_mask_flat], anchor[pos_mask_flat])
 
                 ciou_loss = self.ciou_loss(pred_boxes, target_boxes)
                 loss_dict[f'ciou_l{level_idx}'] = ciou_loss.item()
