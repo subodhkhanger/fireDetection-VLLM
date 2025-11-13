@@ -41,7 +41,8 @@ class CompositeLoss(nn.Module):
         focal_gamma=2.0,
         loss_weights=None,
         use_attention_loss=True,
-        use_auxiliary_loss=False
+        use_auxiliary_loss=False,
+        strides=None
     ):
         super().__init__()
 
@@ -59,6 +60,9 @@ class CompositeLoss(nn.Module):
         self.loss_weights = loss_weights
         self.use_attention_loss = use_attention_loss
         self.use_auxiliary_loss = use_auxiliary_loss
+
+        # Strides for each FPN level (for bbox normalization)
+        self.strides = strides or [8, 16, 32, 64]
 
         # Initialize loss modules
         self.focal_loss = FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
@@ -121,15 +125,25 @@ class CompositeLoss(nn.Module):
             pos_mask_flat = pos_mask.reshape(-1)
 
             if pos_mask_flat.any():
+                # Get stride for this level
+                stride = self.strides[level_idx] if level_idx < len(self.strides) else self.strides[-1]
+
                 pred_ltrb = bbox_pred.permute(0, 2, 3, 1).reshape(-1, 4)
                 target_ltrb = bbox_targets.permute(0, 2, 3, 1).reshape(-1, 4)
+
+                # CRITICAL FIX: Normalize predictions by stride
+                # This makes predictions stride-relative (not pixel-absolute)
+                # Target LTRB is in pixels, pred LTRB after exp() is ~0.1-1000
+                # Dividing pred by stride brings them to similar scale as targets/stride
+                pred_ltrb_normalized = pred_ltrb / stride
+                target_ltrb_normalized = target_ltrb / stride
 
                 anchor = anchor_points.reshape(-1, 2)
                 B = bbox_pred.shape[0]
                 anchor = anchor.unsqueeze(0).repeat(B, 1, 1).reshape(-1, 2)
 
-                pred_boxes = self._ltrb_to_xyxy(pred_ltrb[pos_mask_flat], anchor[pos_mask_flat])
-                target_boxes = self._ltrb_to_xyxy(target_ltrb[pos_mask_flat], anchor[pos_mask_flat])
+                pred_boxes = self._ltrb_to_xyxy(pred_ltrb_normalized[pos_mask_flat], anchor[pos_mask_flat])
+                target_boxes = self._ltrb_to_xyxy(target_ltrb_normalized[pos_mask_flat], anchor[pos_mask_flat])
 
                 ciou_loss = self.ciou_loss(pred_boxes, target_boxes)
                 loss_dict[f'ciou_l{level_idx}'] = ciou_loss.item()

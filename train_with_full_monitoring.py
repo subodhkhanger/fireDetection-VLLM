@@ -267,6 +267,10 @@ def main():
 
     # Create loss, optimizer, scheduler
     logger.info("Creating training components...")
+
+    # Get strides from config
+    fpn_strides = config['model'].get('fpn_strides', [8, 16, 32, 64])
+
     loss_fn = CompositeLoss(
         focal_alpha=config['loss']['focal_alpha'],
         focal_gamma=config['loss']['focal_gamma'],
@@ -279,7 +283,8 @@ def main():
             'auxiliary': config['loss'].get('auxiliary_weight', 0.0)
         },
         use_attention_loss=(config['loss'].get('attention_weight', 0.0) > 0),
-        use_auxiliary_loss=(config['loss'].get('auxiliary_weight', 0.0) > 0)
+        use_auxiliary_loss=(config['loss'].get('auxiliary_weight', 0.0) > 0),
+        strides=fpn_strides  # Pass strides for bbox normalization
     )
 
     optimizer = torch.optim.AdamW(

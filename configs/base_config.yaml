@@ -25,6 +25,7 @@ model:
   # Detection head
   fpn_channels: 256
   num_classes: 3  # background + fire + smoke
+  fpn_strides: [8, 16, 32, 64]  # Strides for each FPN level
 
 # Training Configuration
 training:
@@ -35,7 +36,7 @@ training:
 
   # Optimizer
   optimizer: "adamw"
-  base_lr: 1.0e-4
+  base_lr: 5.0e-5  # Reduced from 1e-4 for stability
   weight_decay: 0.05
 
   # Learning rate schedule
@@ -66,9 +67,9 @@ training:
 loss:
   # Loss weights
   focal_weight: 1.0
-  ciou_weight: 5.0
+  ciou_weight: 2.0  # Reduced from 5.0 for stability
   attention_weight: 0.1
-  dice_weight: 2.0
+  dice_weight: 1.0  # Reduced from 2.0 for stability
   auxiliary_weight: 0.5
 
   # Focal loss parameters

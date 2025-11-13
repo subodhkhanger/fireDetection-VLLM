@@ -137,6 +137,10 @@ def main():
 
     # Create loss function
     logger.info("Creating loss function...")
+
+    # Get strides from config
+    fpn_strides = config['model'].get('fpn_strides', [8, 16, 32, 64])
+
     loss_fn = CompositeLoss(
         focal_alpha=config['loss']['focal_alpha'],
         focal_gamma=config['loss']['focal_gamma'],
@@ -147,7 +151,8 @@ def main():
             'attention': config['loss']['attention_weight'],
             'centerness': 1.0
         },
-        use_attention_loss=True
+        use_attention_loss=True,
+        strides=fpn_strides  # Pass strides for bbox normalization
     )
 
     # Create optimizer
