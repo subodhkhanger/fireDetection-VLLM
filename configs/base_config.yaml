@@ -50,7 +50,7 @@ training:
   ema_decay: 0.9999
 
   # Mixed precision
-  use_amp: true  # Now safe with fp32 casting for exp() and division ops
+  #use_amp: true  # Now safe with fp32 casting for exp() and division ops
 
   # Gradient clipping
   clip_grad_norm: 1.0
