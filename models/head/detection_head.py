@@ -102,14 +102,14 @@ class FireDetectionHead(nn.Module):
     def _init_weights(self, prior_prob):
         """Initialize weights"""
         # Initialize shared conv
-        for m in self.shared_conv.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.normal_(m.weight, std=0.01)
+        for layer in self.shared_conv.modules():
+            if isinstance(layer, nn.Conv2d):
+                nn.init.normal_(layer.weight, std=0.01)
 
         # Initialize heads
         for modules in [self.cls_head, self.bbox_head, self.centerness_head]:
             for layer in modules.modules():
-                if isinstance(m, nn.Conv2d):
+                if isinstance(layer, nn.Conv2d):
                     nn.init.normal_(layer.weight, std=0.01)
                     if layer.bias is not None:
                         nn.init.constant_(layer.bias, 0)

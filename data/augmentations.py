@@ -24,11 +24,13 @@ def get_train_transforms(img_size=640):
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
         A.RandomRotate90(p=0.5),
-        A.ShiftScaleRotate(
-            shift_limit=0.1,
-            scale_limit=0.2,
-            rotate_limit=15,
-            border_mode=cv2.BORDER_CONSTANT,
+        A.Affine(
+            scale=(0.8, 1.2),
+            translate_percent=(-0.1, 0.1),
+            rotate=(-15, 15),
+            shear=(-5, 5),
+            cval=0,
+            fit_output=False,
             p=0.5
         ),
 
@@ -41,7 +43,7 @@ def get_train_transforms(img_size=640):
 
         # Noise and blur
         A.OneOf([
-            A.GaussNoise(var_limit=(10.0, 50.0)),
+            A.GaussNoise(std_range=(0.05, 0.15), mean_range=(0.0, 0.0)),
             A.GaussianBlur(blur_limit=(3, 7)),
             A.MotionBlur(blur_limit=7),
             A.MedianBlur(blur_limit=5),
@@ -49,18 +51,18 @@ def get_train_transforms(img_size=640):
 
         # Cutout/Erase
         A.CoarseDropout(
-            max_holes=8,
-            max_height=32,
-            max_width=32,
-            fill_value=0,
+            num_holes_range=(4, 8),
+            hole_height_range=(0.02, 0.12),
+            hole_width_range=(0.02, 0.12),
+            fill=0,
             p=0.3
         ),
 
         # Weather conditions (fire detection specific)
         A.OneOf([
-            A.RandomSnow(snow_point_lower=0.1, snow_point_upper=0.3, brightness_coeff=1.5),
-            A.RandomFog(fog_coef_lower=0.1, fog_coef_upper=0.3),
-            A.RandomSunFlare(flare_roi=(0, 0, 1, 0.5), angle_lower=0.5),
+            A.RandomSnow(snow_point_range=(0.1, 0.3), brightness_coeff=1.5),
+            A.RandomFog(fog_coef_range=(0.1, 0.3), alpha_coef=0.08),
+            A.RandomSunFlare(flare_roi=(0, 0, 1, 0.5), angle_range=(0, 0.5)),
         ], p=0.15),
 
         # Normalization

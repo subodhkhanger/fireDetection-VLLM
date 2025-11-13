@@ -144,9 +144,11 @@ class CompositeLoss(nn.Module):
                 centerness_logits = centerness_pred.squeeze(1)
 
                 if pos_mask_flat.any():
+                    centerness_logits_flat = centerness_logits.reshape(-1)
+                    centerness_targets_flat = centerness_targets.reshape(-1)
                     centerness_loss = self.bce_loss(
-                        centerness_logits[pos_mask],
-                        centerness_targets[pos_mask]
+                        centerness_logits_flat[pos_mask_flat],
+                        centerness_targets_flat[pos_mask_flat]
                     )
                 else:
                     centerness_loss = torch.tensor(0.0, device=device)
