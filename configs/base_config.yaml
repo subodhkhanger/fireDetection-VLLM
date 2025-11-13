@@ -55,21 +55,21 @@ training:
   # Gradient clipping
   clip_grad_norm: 1.0
 
-  # Augmentation
-  use_mixup: true
+  # Augmentation (disabled initially for gradient stability)
+  use_mixup: false
   mixup_alpha: 0.2
-  use_cutmix: true
+  use_cutmix: false
   cutmix_alpha: 1.0
-  use_mosaic: true
+  use_mosaic: false
   mosaic_prob: 0.5
 
 # Loss Configuration
 loss:
   # Loss weights
   focal_weight: 1.0
-  ciou_weight: 2.0  # Reduced from 5.0 for stability
-  attention_weight: 0.1
-  dice_weight: 1.0  # Reduced from 2.0 for stability
+  ciou_weight: 0.5  # Dramatically reduced for gradient stability with L1 loss
+  attention_weight: 0.0  # Disabled initially for stability
+  dice_weight: 0.5  # Reduced from 2.0 for stability
   auxiliary_weight: 0.5
 
   # Focal loss parameters

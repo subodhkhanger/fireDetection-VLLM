@@ -42,7 +42,8 @@ class CompositeLoss(nn.Module):
         loss_weights=None,
         use_attention_loss=True,
         use_auxiliary_loss=False,
-        strides=None
+        strides=None,
+        use_l1_loss=True  # Use L1 instead of CIoU for stability
     ):
         super().__init__()
 
@@ -60,13 +61,15 @@ class CompositeLoss(nn.Module):
         self.loss_weights = loss_weights
         self.use_attention_loss = use_attention_loss
         self.use_auxiliary_loss = use_auxiliary_loss
+        self.use_l1_loss = use_l1_loss
 
         # Strides for each FPN level (for bbox normalization)
         self.strides = strides or [8, 16, 32, 64]
 
         # Initialize loss modules
         self.focal_loss = FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
-        self.ciou_loss = CIoULoss()
+        self.ciou_loss = CIoULoss() if not use_l1_loss else None
+        self.l1_loss = nn.L1Loss(reduction='mean') if use_l1_loss else None
         self.dice_loss = DiceLoss()
         self.bce_loss = nn.BCEWithLogitsLoss(reduction='mean')
 
@@ -132,18 +135,26 @@ class CompositeLoss(nn.Module):
                 pred_ltrb = pred_ltrb.float()
                 target_ltrb = target_ltrb.float()
 
-                anchor = anchor_points.reshape(-1, 2)
-                B = bbox_pred.shape[0]
-                anchor = anchor.unsqueeze(0).repeat(B, 1, 1).reshape(-1, 2)
+                if self.use_l1_loss:
+                    # Use simple L1 loss - much more stable gradients
+                    # Gradients are bounded to [-1, 1]
+                    bbox_loss = self.l1_loss(pred_ltrb[pos_mask_flat], target_ltrb[pos_mask_flat])
+                    loss_dict[f'bbox_l1_l{level_idx}'] = bbox_loss.item()
+                else:
+                    # Use CIoU loss - better for localization but less stable
+                    anchor = anchor_points.reshape(-1, 2)
+                    B = bbox_pred.shape[0]
+                    anchor = anchor.unsqueeze(0).repeat(B, 1, 1).reshape(-1, 2)
 
-                pred_boxes = self._ltrb_to_xyxy(pred_ltrb[pos_mask_flat], anchor[pos_mask_flat])
-                target_boxes = self._ltrb_to_xyxy(target_ltrb[pos_mask_flat], anchor[pos_mask_flat])
+                    pred_boxes = self._ltrb_to_xyxy(pred_ltrb[pos_mask_flat], anchor[pos_mask_flat])
+                    target_boxes = self._ltrb_to_xyxy(target_ltrb[pos_mask_flat], anchor[pos_mask_flat])
 
-                ciou_loss = self.ciou_loss(pred_boxes, target_boxes)
-                loss_dict[f'ciou_l{level_idx}'] = ciou_loss.item()
-                total_loss += self.loss_weights['ciou'] * ciou_loss / num_levels
+                    bbox_loss = self.ciou_loss(pred_boxes, target_boxes)
+                    loss_dict[f'ciou_l{level_idx}'] = bbox_loss.item()
+
+                total_loss += self.loss_weights['ciou'] * bbox_loss / num_levels
             else:
-                loss_dict[f'ciou_l{level_idx}'] = 0.0
+                loss_dict[f'bbox_l{level_idx}'] = 0.0
 
             # Centerness loss (Binary CE)
             centerness_pred = pred.get('centerness')

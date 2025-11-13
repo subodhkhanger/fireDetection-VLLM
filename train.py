@@ -151,8 +151,9 @@ def main():
             'attention': config['loss']['attention_weight'],
             'centerness': 1.0
         },
-        use_attention_loss=True,
-        strides=fpn_strides  # Pass strides for bbox normalization
+        use_attention_loss=(config['loss']['attention_weight'] > 0),
+        strides=fpn_strides,  # Pass strides for bbox normalization
+        use_l1_loss=True  # Use L1 loss for stability instead of CIoU
     )
 
     # Create optimizer

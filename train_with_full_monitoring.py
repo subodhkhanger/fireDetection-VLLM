@@ -284,7 +284,8 @@ def main():
         },
         use_attention_loss=(config['loss'].get('attention_weight', 0.0) > 0),
         use_auxiliary_loss=(config['loss'].get('auxiliary_weight', 0.0) > 0),
-        strides=fpn_strides  # Pass strides for bbox normalization
+        strides=fpn_strides,  # Pass strides for bbox normalization
+        use_l1_loss=True  # Use L1 loss for stability instead of CIoU
     )
 
     optimizer = torch.optim.AdamW(
