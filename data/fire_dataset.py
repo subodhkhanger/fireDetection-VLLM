@@ -168,29 +168,22 @@ class FireDetectionDataset(Dataset):
             bbox = ann['bbox']  # [x, y, w, h] in COCO format (PIXEL coordinates)
             category_id = ann['category_id']
 
-            # Normalize bounding box coordinates to [0, 1] range
-            # Annotations are in PIXEL coordinates, need to normalize them
             x, y, w, h = bbox
-            x = x / img_width
-            y = y / img_height
-            w = w / img_width
-            h = h / img_height
-
-            # Clip to valid range [0, 1] to handle floating point errors
-            x = max(0.0, min(1.0, x))
-            y = max(0.0, min(1.0, y))
-            # Ensure x+w and y+h don't exceed 1.0
-            w = min(w, 1.0 - x)
-            h = min(h, 1.0 - y)
+            # Clip to valid pixel range to handle slight annotation drift
+            x = max(0.0, min(float(img_width - 1), x))
+            y = max(0.0, min(float(img_height - 1), y))
+            w = max(0.0, min(float(img_width - x), w))
+            h = max(0.0, min(float(img_height - y), h))
 
             # Skip invalid/degenerate bounding boxes
-            # Require minimum size of 0.001 (0.1% of image dimension) for both width and height
-            # and minimum area of 0.00001 (0.001% of image area) to filter out annotation errors
-            min_size = 0.001
+            # Require minimum size relative to image dimensions to filter out annotation errors
+            min_size = 0.001  # relative to original dimensions
             min_area = 0.00001
-            area = w * h
+            width_rel = (w / img_width) if img_width > 0 else 0.0
+            height_rel = (h / img_height) if img_height > 0 else 0.0
+            area_rel = width_rel * height_rel
 
-            if w < min_size or h < min_size or area < min_area:
+            if width_rel < min_size or height_rel < min_size or area_rel < min_area:
                 continue
 
             boxes.append([x, y, w, h])
