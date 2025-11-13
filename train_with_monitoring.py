@@ -98,13 +98,30 @@ def main():
 
     # Create dataloaders
     logger.info("Creating dataloaders...")
-    train_loader, val_loader, _ = create_dataloaders(
-        config,
-        train_ann=args.train_ann,
-        val_ann=args.val_ann,
+
+    # For FireTiny dataset, images are in data_dir/images/
+    # The create_dataloaders expects the parent images directory
+    data_dir_path = Path(args.data_dir)
+    if (data_dir_path / 'images').exists():
+        # FireTiny structure: data/FireTiny/images/train/
+        image_dir = data_dir_path / 'images'
+    else:
+        # Standard structure
+        image_dir = data_dir_path
+
+    dataloaders = create_dataloaders(
+        data_dir=str(image_dir),
+        train_annotation=args.train_ann,
+        val_annotation=args.val_ann,
+        test_annotation=None,
+        batch_size=config['training']['batch_size'],
         num_workers=args.num_workers,
-        pin_memory=False if args.device == 'mps' else True
+        img_size=config['model']['input_size'][0],
+        pin_memory=(device.type == 'cuda')
     )
+
+    train_loader = dataloaders['train']
+    val_loader = dataloaders['val']
 
     logger.info(f"Train samples: {len(train_loader.dataset)}")
     logger.info(f"Val samples: {len(val_loader.dataset)}")
@@ -123,7 +140,20 @@ def main():
 
     # Create loss function
     logger.info("Creating loss function...")
-    loss_fn = CompositeLoss(config)
+    loss_fn = CompositeLoss(
+        focal_alpha=config['loss']['focal_alpha'],
+        focal_gamma=config['loss']['focal_gamma'],
+        loss_weights={
+            'focal': config['loss']['focal_weight'],
+            'ciou': config['loss']['ciou_weight'],
+            'dice': config['loss']['dice_weight'],
+            'centerness': 1.0,  # Centerness loss weight
+            'attention': config['loss'].get('attention_weight', 0.0),
+            'auxiliary': config['loss'].get('auxiliary_weight', 0.0)
+        },
+        use_attention_loss=(config['loss'].get('attention_weight', 0.0) > 0),
+        use_auxiliary_loss=(config['loss'].get('auxiliary_weight', 0.0) > 0)
+    )
 
     # Create optimizer
     logger.info("Creating optimizer...")
@@ -239,12 +269,12 @@ def main():
         all_metrics = {**train_metrics, **val_metrics}
 
         save_checkpoint(
-            checkpoint_dir,
             model,
             optimizer,
             scheduler,
             epoch + 1,
             all_metrics,
+            checkpoint_dir,
             is_best=is_best
         )
 
