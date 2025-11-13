@@ -119,11 +119,11 @@ class FireDetectionHead(nn.Module):
         bias_value = -math.log((1 - prior_prob) / prior_prob)
         nn.init.constant_(self.cls_head[-1].bias, bias_value)
 
-        # CRITICAL: Initialize bbox head bias for temperature-scaled exp()
-        # With temperature=3 and scale=30:
-        # bias=0 → exp(0/3)*30 = 1*30 = 30 pixels (good starting point)
-        # This matches typical LTRB values of 50-100 pixels reasonably
-        nn.init.constant_(self.bbox_head[-1].bias, 0.0)
+        # CRITICAL: Initialize bbox head bias for Softplus activation
+        # Softplus(x) ≈ x for large x (x > 10)
+        # bias=50 → Softplus(50) ≈ 50 pixels (good starting point)
+        # This matches typical LTRB values of 50-100 pixels
+        nn.init.constant_(self.bbox_head[-1].bias, 50.0)
 
     def forward(self, features, level_idx=0):
         """
@@ -148,30 +148,21 @@ class FireDetectionHead(nn.Module):
         # Bounding box predictions
         bbox_pred = self.bbox_head(x)  # [B, 4, H, W]
 
-        # CRITICAL: Use temperature-scaled exp() to reduce gradient magnitude
-        # Standard exp(x) has gradient exp(x), which explodes for large x
-        # Using exp(x/T) reduces gradients by factor of T
-        # fp16 exp() is highly unstable and can produce inf/nan
+        # CRITICAL: Use Softplus for smooth, stable positive predictions
+        # Softplus(x) = log(1 + exp(x)) with stable implementation
+        # Gradient: sigmoid(x) ∈ (0, 1) - BOUNDED, smooth, never explodes!
+        #
+        # Comparison of activations for bbox regression:
+        # - exp(x): gradient = exp(x) → can be 100,000+ ❌
+        # - ReLU(x): gradient = {0, 1} → works but not smooth ⚠️
+        # - Softplus(x): gradient = sigmoid(x) ∈ (0,1) → smooth & bounded ✅
         original_dtype = bbox_pred.dtype
         bbox_pred = bbox_pred.float()
 
-        # Temperature scaling: reduces gradient magnitude significantly
-        temperature = 3.0  # Higher = smaller gradients, more stability
-        bbox_pred = bbox_pred / temperature
+        # Softplus ensures positive outputs with bounded gradients
+        bbox_pred = F.softplus(bbox_pred, beta=1)
 
-        # Clamp before exp to prevent extreme values
-        # With T=3, input range is [-1, 2.33], giving exp() output [0.37, 10.3]
-        bbox_pred = torch.clamp(bbox_pred, min=-1.0, max=2.5)
-
-        # Apply exponential to ensure positive box dimensions
-        # Gradient is now exp(x/T)/T instead of exp(x)
-        bbox_pred = torch.exp(bbox_pred)
-
-        # Scale back up by temperature to get reasonable pixel values
-        # This gives us final range: [0.37*3, 10.3*3] = [1.1, 31] pixels
-        bbox_pred = bbox_pred * (temperature * 10)  # Extra 10x for typical box sizes
-
-        # Cast back to original dtype for mixed precision training
+        # Cast back to original dtype
         bbox_pred = bbox_pred.to(original_dtype)
 
         # Centerness predictions
