@@ -14,6 +14,8 @@ from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
 import copy
 
+from utils.target_encoder import FCOSTargetEncoder
+
 
 class EMA:
     """
@@ -90,7 +92,9 @@ class Trainer:
         ema_decay=0.9999,
         gradient_accumulation_steps=1,
         grad_clip_norm=1.0,
-        log_interval=50
+        log_interval=50,
+        num_classes=3,
+        strides=None
     ):
         self.model = model
         self.optimizer = optimizer
@@ -101,6 +105,12 @@ class Trainer:
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.grad_clip_norm = grad_clip_norm
         self.log_interval = log_interval
+
+        # Target encoder (builds per-level dense targets)
+        self.target_encoder = FCOSTargetEncoder(
+            num_classes=num_classes,
+            strides=strides
+        )
 
         # Mixed precision scaler
         self.scaler = GradScaler() if use_amp else None
@@ -148,7 +158,8 @@ class Trainer:
             if self.use_amp:
                 with autocast():
                     predictions = self.model(images)
-                    loss, loss_dict = self.loss_fn(predictions, targets, epoch=epoch)
+                    encoded_targets = self.target_encoder.encode(targets, predictions)
+                    loss, loss_dict = self.loss_fn(predictions, encoded_targets, epoch=epoch)
 
                     # Normalize loss for gradient accumulation
                     loss = loss / self.gradient_accumulation_steps
@@ -157,7 +168,8 @@ class Trainer:
                 self.scaler.scale(loss).backward()
             else:
                 predictions = self.model(images)
-                loss, loss_dict = self.loss_fn(predictions, targets, epoch=epoch)
+                encoded_targets = self.target_encoder.encode(targets, predictions)
+                loss, loss_dict = self.loss_fn(predictions, encoded_targets, epoch=epoch)
                 loss = loss / self.gradient_accumulation_steps
                 loss.backward()
 
@@ -256,10 +268,12 @@ class Trainer:
             if self.use_amp:
                 with autocast():
                     predictions = self.model(images)
-                    loss, loss_dict = self.loss_fn(predictions, targets, epoch=epoch)
+                    encoded_targets = self.target_encoder.encode(targets, predictions)
+                    loss, loss_dict = self.loss_fn(predictions, encoded_targets, epoch=epoch)
             else:
                 predictions = self.model(images)
-                loss, loss_dict = self.loss_fn(predictions, targets, epoch=epoch)
+                encoded_targets = self.target_encoder.encode(targets, predictions)
+                loss, loss_dict = self.loss_fn(predictions, encoded_targets, epoch=epoch)
 
             # Accumulate metrics
             total_loss += loss.item()

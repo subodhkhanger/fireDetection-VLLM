@@ -85,7 +85,9 @@ def decode_predictions(
             else:
                 centerness = centerness[batch_idx : batch_idx + 1]
 
-            cls_probs = torch.sigmoid(cls_logits)
+            cls_probs = torch.softmax(cls_logits, dim=1)
+            if cls_probs.shape[1] > 1:
+                cls_probs = cls_probs[:, 1:, :, :]
             cls_probs = cls_probs.permute(0, 2, 3, 1).reshape(1, -1, cls_probs.shape[1])
 
             centerness_probs = torch.sigmoid(centerness)

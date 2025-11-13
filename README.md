@@ -141,7 +141,7 @@ from models.fire_vit import FireViT
 # Initialize model
 model = FireViT(
     img_size=640,
-    num_classes=2,  # fire, smoke
+    num_classes=3,  # background + fire + smoke
     embed_dims=[192, 384, 768, 768],
     num_heads=[8, 12, 16, 16],
     num_blocks=[2, 2, 6, 2]
@@ -162,7 +162,7 @@ with torch.no_grad():
 
 # Process predictions
 for level, pred in enumerate(predictions):
-    cls_logits = pred['cls_logits']  # [B, 2, H, W]
+    cls_logits = pred['cls_logits']  # [B, 3, H, W]
     bbox_pred = pred['bbox_pred']    # [B, 4, H, W]
     centerness = pred['centerness']  # [B, 1, H, W]
 
@@ -454,6 +454,5 @@ This is a research project for DLR Computer Vision Research Position. Contributi
 - D-Fire Dataset
 - PyTorch Team
 - timm library (Ross Wightman)
-
 
 

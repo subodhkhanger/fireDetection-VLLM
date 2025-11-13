@@ -35,7 +35,7 @@ class FireDetectionHead(nn.Module):
     def __init__(
         self,
         in_channels=256,
-        num_classes=2,
+        num_classes=3,
         num_convs=4,
         prior_prob=0.01
     ):
@@ -168,7 +168,7 @@ class MultiScaleDetectionHead(nn.Module):
     def __init__(
         self,
         in_channels=256,
-        num_classes=2,
+        num_classes=3,
         num_convs=4
     ):
         super().__init__()

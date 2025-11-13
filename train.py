@@ -185,6 +185,8 @@ def main():
         milestones=[config['training']['warmup_epochs']]
     )
 
+    fpn_strides = config['model'].get('fpn_strides', [8, 16, 32, 64])
+
     # Create trainer
     logger.info("Creating trainer...")
     trainer = Trainer(
@@ -198,7 +200,9 @@ def main():
         ema_decay=config['training']['ema_decay'],
         gradient_accumulation_steps=config['training']['accumulation_steps'],
         grad_clip_norm=config['training']['clip_grad_norm'],
-        log_interval=config['logging']['log_interval']
+        log_interval=config['logging']['log_interval'],
+        num_classes=config['model'].get('num_classes', 3),
+        strides=fpn_strides
     )
 
     # Resume from checkpoint if specified

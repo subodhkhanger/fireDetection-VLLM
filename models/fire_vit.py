@@ -35,7 +35,7 @@ class FireViT(nn.Module):
     def __init__(
         self,
         img_size=640,
-        num_classes=2,
+        num_classes=3,
         # Backbone config
         patch_size=16,
         stride=8,
@@ -185,7 +185,7 @@ def build_fire_vit(config):
 
     model = FireViT(
         img_size=model_config.get('input_size', [640, 640])[0],
-        num_classes=model_config.get('num_classes', 2),
+        num_classes=model_config.get('num_classes', 3),
         patch_size=model_config.get('patch_size', 16),
         stride=model_config.get('stride', 8),
         embed_dims=model_config.get('embed_dims', [192, 384, 768, 768]),

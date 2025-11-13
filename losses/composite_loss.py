@@ -76,11 +76,14 @@ class CompositeLoss(nn.Module):
         Args:
             predictions: List of dicts with 'cls_logits', 'bbox_pred', 'centerness'
                         One dict per pyramid level
-            targets: Dict with:
-                - 'labels': [B, H, W] class labels
-                - 'boxes': [B, N, 4] bounding boxes
-                - 'masks': [B, H, W] binary masks for attention
-            attention_maps: Optional attention maps from transformer
+            targets: Encoded dict from FCOSTargetEncoder with:
+                - 'cls_targets': list of [B, H, W]
+                - 'box_targets': list of [B, 4, H, W]
+                - 'centerness': list of [B, 1, H, W]
+                - 'pos_mask': list of [B, H, W] booleans
+                - 'anchor_points': list of [H, W, 2]
+                - 'attention_masks': optional [B, H_img, W_img]
+            attention_maps: Optional transformer attention maps
             epoch: Current training epoch (for dynamic weighting)
 
         Returns:
@@ -93,10 +96,12 @@ class CompositeLoss(nn.Module):
         # Accumulate losses from all pyramid levels
         num_levels = len(predictions)
 
+        attention_masks = targets.get('attention_masks')
+
         for level_idx, pred in enumerate(predictions):
             # Classification loss (Focal)
             cls_logits = pred['cls_logits']  # [B, C, H, W]
-            cls_targets = self._prepare_cls_targets(targets, cls_logits.shape, device)
+            cls_targets = targets['cls_targets'][level_idx]  # [B, H, W]
 
             focal_loss = self.focal_loss(cls_logits, cls_targets)
             loss_dict[f'focal_l{level_idx}'] = focal_loss.item()
@@ -108,49 +113,51 @@ class CompositeLoss(nn.Module):
             total_loss += self.loss_weights['dice'] * dice_loss / num_levels
 
             # Bounding box loss (CIoU) - only on positive samples
-            if 'boxes' in targets and targets['boxes'].numel() > 0:
-                bbox_pred = pred['bbox_pred']  # [B, 4, H, W]
-                bbox_targets, pos_mask = self._prepare_bbox_targets(
-                    targets, bbox_pred.shape, device
-                )
+            bbox_pred = pred['bbox_pred']  # [B, 4, H, W]
+            bbox_targets = targets['box_targets'][level_idx]
+            pos_mask = targets['pos_mask'][level_idx]  # [B, H, W]
+            anchor_points = targets['anchor_points'][level_idx].to(device)  # [H, W, 2]
 
-                if pos_mask.sum() > 0:
-                    # Convert predictions to boxes
-                    pred_boxes = self._pred_to_boxes(bbox_pred, level_idx)
+            pos_mask_flat = pos_mask.reshape(-1)
 
-                    # Check if mask shape matches predictions
-                    if pos_mask.shape[0] == pred_boxes.shape[0]:
-                        # Filter positive samples
-                        pred_boxes_pos = pred_boxes[pos_mask]
-                        bbox_targets_pos = bbox_targets[pos_mask]
+            if pos_mask_flat.any():
+                pred_ltrb = bbox_pred.permute(0, 2, 3, 1).reshape(-1, 4)
+                target_ltrb = bbox_targets.permute(0, 2, 3, 1).reshape(-1, 4)
 
-                        ciou_loss = self.ciou_loss(pred_boxes_pos, bbox_targets_pos)
-                        loss_dict[f'ciou_l{level_idx}'] = ciou_loss.item()
-                        total_loss += self.loss_weights['ciou'] * ciou_loss / num_levels
-                    else:
-                        # Shape mismatch - skip bbox loss for this level
-                        loss_dict[f'ciou_l{level_idx}'] = 0.0
-                else:
-                    loss_dict[f'ciou_l{level_idx}'] = 0.0
+                anchor = anchor_points.reshape(-1, 2)
+                B = bbox_pred.shape[0]
+                anchor = anchor.unsqueeze(0).repeat(B, 1, 1).reshape(-1, 2)
+
+                pred_boxes = self._ltrb_to_xyxy(pred_ltrb[pos_mask_flat], anchor[pos_mask_flat])
+                target_boxes = self._ltrb_to_xyxy(target_ltrb[pos_mask_flat], anchor[pos_mask_flat])
+
+                ciou_loss = self.ciou_loss(pred_boxes, target_boxes)
+                loss_dict[f'ciou_l{level_idx}'] = ciou_loss.item()
+                total_loss += self.loss_weights['ciou'] * ciou_loss / num_levels
+            else:
+                loss_dict[f'ciou_l{level_idx}'] = 0.0
 
             # Centerness loss (Binary CE)
-            if 'centerness' in pred:
-                centerness_pred = pred['centerness']  # [B, 1, H, W]
-                centerness_targets = self._prepare_centerness_targets(
-                    targets, centerness_pred.shape, device
-                )
+            centerness_pred = pred.get('centerness')
+            if centerness_pred is not None:
+                centerness_targets = targets['centerness'][level_idx].squeeze(1)
+                centerness_logits = centerness_pred.squeeze(1)
 
-                centerness_loss = self.bce_loss(
-                    centerness_pred.squeeze(1),
-                    centerness_targets.float()  # Convert to float
-                )
+                if pos_mask_flat.any():
+                    centerness_loss = self.bce_loss(
+                        centerness_logits[pos_mask],
+                        centerness_targets[pos_mask]
+                    )
+                else:
+                    centerness_loss = torch.tensor(0.0, device=device)
+
                 loss_dict[f'centerness_l{level_idx}'] = centerness_loss.item()
                 total_loss += self.loss_weights['centerness'] * centerness_loss / num_levels
 
         # Attention regularization loss (if available)
         if self.use_attention_loss and attention_maps is not None:
-            if 'masks' in targets:
-                attn_loss = self.attention_loss(attention_maps, targets['masks'])
+            if attention_masks is not None:
+                attn_loss = self.attention_loss(attention_maps, attention_masks)
 
                 # Warm-up schedule for attention loss
                 attn_weight = min(self.loss_weights['attention'], epoch / 100)
@@ -172,75 +179,25 @@ class CompositeLoss(nn.Module):
 
         return total_loss, loss_dict
 
-    def _prepare_cls_targets(self, targets, shape, device):
-        """Prepare classification targets matching prediction shape"""
-        B, C, H, W = shape
+    def _ltrb_to_xyxy(self, ltrb, anchor_points):
+        x = anchor_points[:, 0]
+        y = anchor_points[:, 1]
 
-        if 'labels' in targets:
-            labels = targets['labels']
+        x1 = x - ltrb[:, 0]
+        y1 = y - ltrb[:, 1]
+        x2 = x + ltrb[:, 2]
+        y2 = y + ltrb[:, 3]
 
-            # Resize if needed
-            if labels.shape[-2:] != (H, W):
-                labels = torch.nn.functional.interpolate(
-                    labels.unsqueeze(1).float(),
-                    size=(H, W),
-                    mode='nearest'
-                ).squeeze(1).long()
-
-            return labels
-        else:
-            # Return dummy targets
-            return torch.zeros(B, H, W, dtype=torch.long, device=device)
-
-    def _prepare_bbox_targets(self, targets, shape, device):
-        """Prepare bounding box targets"""
-        if 'boxes' not in targets or targets['boxes'].numel() == 0:
-            return None, torch.zeros(0, dtype=torch.bool, device=device)
-
-        # This is a simplified version
-        # In practice, you'd assign targets to specific spatial locations
-        boxes = targets['boxes']  # [B, N, 4]
-
-        # Create positive mask (simplified - all boxes are positive)
-        pos_mask = boxes.sum(dim=-1) > 0  # [B, N]
-
-        return boxes, pos_mask.flatten()
-
-    def _prepare_centerness_targets(self, targets, shape, device):
-        """Prepare centerness targets"""
-        B, _, H, W = shape
-
-        # Simplified: use binary mask of fire regions
-        if 'masks' in targets:
-            masks = targets['masks']
-            if masks.shape[-2:] != (H, W):
-                masks = torch.nn.functional.interpolate(
-                    masks.unsqueeze(1).float(),
-                    size=(H, W),
-                    mode='bilinear',
-                    align_corners=False
-                ).squeeze(1)
-            return masks
-        else:
-            return torch.zeros(B, H, W, device=device)
-
-    def _pred_to_boxes(self, bbox_pred, level_idx):
-        """Convert bbox predictions to boxes"""
-        # This is a placeholder
-        # In practice, you'd use anchor points and convert (l,t,r,b) to boxes
-        B, _, H, W = bbox_pred.shape
-
-        # Flatten and reshape
-        boxes = bbox_pred.permute(0, 2, 3, 1).reshape(B * H * W, 4)
-
-        return boxes
+        return torch.stack([x1, y1, x2, y2], dim=1)
 
 
 if __name__ == "__main__":
     # Unit test
     print("Testing CompositeLoss...")
 
-    B, C, H, W = 2, 2, 64, 64
+    from utils.target_encoder import FCOSTargetEncoder
+
+    B, C, H, W = 2, 3, 64, 64
     num_levels = 4
 
     # Create dummy predictions (multi-scale)
@@ -249,17 +206,28 @@ if __name__ == "__main__":
         scale = 2 ** level
         pred = {
             'cls_logits': torch.randn(B, C, H // scale, W // scale),
-            'bbox_pred': torch.rand(B, 4, H // scale, W // scale) * 10,
+            'bbox_pred': torch.rand(B, 4, H // scale, W // scale) * 5,
             'centerness': torch.randn(B, 1, H // scale, W // scale)
         }
         predictions.append(pred)
 
-    # Create dummy targets
-    targets = {
-        'labels': torch.randint(0, C, (B, H, W)),
-        'boxes': torch.rand(B, 10, 4) * 100,  # 10 boxes per image
-        'masks': torch.rand(B, H, W) > 0.9  # Binary mask
-    }
+    # Build dummy raw targets (COCO format boxes)
+    raw_targets = []
+    for b in range(B):
+        num_boxes = 5
+        boxes = torch.rand(num_boxes, 4) * 50
+        boxes[:, 2:] = boxes[:, 2:].abs() + 5  # width/height >=5
+        labels = torch.randint(0, 2, (num_boxes,))
+        masks = torch.zeros(H, W)
+        masks[10:30, 10:30] = 1.0
+        raw_targets.append({
+            'boxes': boxes,
+            'labels': labels,
+            'masks': masks
+        })
+
+    encoder = FCOSTargetEncoder(num_classes=C)
+    encoded_targets = encoder.encode(raw_targets, predictions)
 
     # Create dummy attention maps
     attention_maps = torch.softmax(torch.randn(B, 8, 256, 256), dim=-1)
@@ -281,7 +249,7 @@ if __name__ == "__main__":
     # Compute loss
     total_loss, loss_dict = composite_loss(
         predictions,
-        targets,
+        encoded_targets,
         attention_maps=attention_maps,
         epoch=10
     )
@@ -300,7 +268,7 @@ if __name__ == "__main__":
     for pred in predictions:
         pred['cls_logits'].requires_grad = True
 
-    total_loss, _ = composite_loss(predictions, targets, attention_maps, epoch=10)
+    total_loss, _ = composite_loss(predictions, encoded_targets, attention_maps, epoch=10)
     total_loss.backward()
 
     print(f"✓ Gradients computed successfully")
@@ -310,7 +278,7 @@ if __name__ == "__main__":
     composite_loss_no_attn = CompositeLoss(use_attention_loss=False)
     total_loss_no_attn, loss_dict_no_attn = composite_loss_no_attn(
         predictions,
-        targets,
+        encoded_targets,
         attention_maps=None
     )
     print(f"Total loss (no attention): {total_loss_no_attn.item():.4f}")

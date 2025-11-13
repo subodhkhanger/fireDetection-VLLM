@@ -25,7 +25,7 @@ model:
 
   # Detection head
   fpn_channels: 128  # vs 256
-  num_classes: 2  # fire, smoke
+  num_classes: 3  # background + fire + smoke
 
 # Training Configuration (Optimized for Mac M1)
 training:

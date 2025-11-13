@@ -133,7 +133,7 @@ def test_detection_head():
 
     head = MultiScaleDetectionHead(
         in_channels=256,
-        num_classes=2
+        num_classes=3
     )
 
     pyramid_features = [
@@ -201,6 +201,8 @@ def test_composite_loss():
     print("Testing Composite Loss...")
     print("="*60)
 
+    from utils.target_encoder import FCOSTargetEncoder
+
     composite_loss = CompositeLoss(
         focal_alpha=0.25,
         focal_gamma=2.0,
@@ -210,23 +212,33 @@ def test_composite_loss():
     # Dummy predictions
     predictions = [
         {
-            'cls_logits': torch.randn(2, 2, 64, 64),
+            'cls_logits': torch.randn(2, 3, 64, 64),
             'bbox_pred': torch.rand(2, 4, 64, 64) * 10,
             'centerness': torch.randn(2, 1, 64, 64)
         }
         for _ in range(4)
     ]
 
-    # Dummy targets
-    targets = {
-        'labels': torch.randint(0, 2, (2, 64, 64)),
-        'boxes': torch.rand(2, 10, 4) * 100,
-        'masks': torch.rand(2, 64, 64) > 0.9
-    }
+    # Dummy raw targets (COCO format)
+    raw_targets = []
+    for _ in range(2):
+        boxes = torch.rand(5, 4) * 50
+        boxes[:, 2:] = boxes[:, 2:].abs() + 5
+        labels = torch.randint(0, 2, (5,))
+        masks = torch.zeros(256, 256)
+        masks[20:80, 20:80] = 1
+        raw_targets.append({
+            'boxes': boxes,
+            'labels': labels,
+            'masks': masks
+        })
+
+    encoder = FCOSTargetEncoder(num_classes=3)
+    encoded_targets = encoder.encode(raw_targets, predictions)
 
     attention_maps = torch.softmax(torch.randn(2, 8, 256, 256), dim=-1)
 
-    total_loss, loss_dict = composite_loss(predictions, targets, attention_maps, epoch=10)
+    total_loss, loss_dict = composite_loss(predictions, encoded_targets, attention_maps, epoch=10)
 
     print(f"✓ Total Loss: {total_loss.item():.4f}")
     print(f"✓ Loss Components:")
@@ -245,7 +257,7 @@ def test_complete_model():
 
     model = FireViT(
         img_size=640,
-        num_classes=2,
+        num_classes=3,
         embed_dims=[192, 384, 768, 768],
         num_heads=[8, 12, 16, 16],
         num_blocks=[2, 2, 6, 2],
@@ -320,7 +332,7 @@ def test_memory_and_speed():
 
     model = FireViT(
         img_size=640,
-        num_classes=2,
+        num_classes=3,
         embed_dims=[192, 384, 768, 768],
         num_heads=[8, 12, 16, 16],
         num_blocks=[2, 2, 6, 2]
