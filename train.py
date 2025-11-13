@@ -227,6 +227,15 @@ def main():
         for key, value in val_metrics.items():
             logger.info(f"  {key}: {value:.4f}")
 
+        if 'test' in dataloaders:
+            logger.info("Running test evaluation...")
+            test_loader = dataloaders['test']
+            test_metrics = trainer.validate(test_loader, epoch=0)
+
+            logger.info("Test Metrics:")
+            for key, value in test_metrics.items():
+                logger.info(f"  {key}: {value:.4f}")
+
         return
 
     # Training loop

@@ -15,6 +15,7 @@ from tqdm import tqdm
 from models.fire_vit import build_fire_vit
 from utils.checkpoint import load_checkpoint
 from utils.visualization import visualize_predictions
+from utils.postprocess import decode_predictions
 
 
 def parse_args():
@@ -32,6 +33,10 @@ def parse_args():
 
     parser.add_argument('--conf-threshold', type=float, default=0.5,
                        help='Confidence threshold for detections')
+    parser.add_argument('--nms-threshold', type=float, default=0.5,
+                       help='IoU threshold for NMS')
+    parser.add_argument('--max-detections', type=int, default=300,
+                       help='Maximum detections per image after NMS')
     parser.add_argument('--device', type=str, default='cuda',
                        choices=['cuda', 'cpu', 'mps'],
                        help='Device to use for inference')
@@ -52,10 +57,14 @@ class FireDetector:
         config_path,
         checkpoint_path,
         device='cuda',
-        conf_threshold=0.5
+        conf_threshold=0.5,
+        nms_threshold=0.5,
+        max_detections=300
     ):
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         self.conf_threshold = conf_threshold
+        self.nms_threshold = nms_threshold
+        self.max_detections = max_detections
 
         # Load config
         with open(config_path, 'r') as f:
@@ -111,71 +120,29 @@ class FireDetector:
 
     def postprocess(self, predictions, orig_size):
         """
-        Postprocess predictions
-
-        Args:
-            predictions: List of prediction dicts
-            orig_size: Original image size (H, W)
-
-        Returns:
-            processed_preds: Processed predictions with scaled boxes
+        Convert raw model outputs to scaled detections.
         """
-        # Get predictions from all levels (use finest level)
-        pred = predictions[0]  # First pyramid level
+        decoded = decode_predictions(
+            predictions,
+            img_size=self.img_size,
+            conf_threshold=self.conf_threshold,
+            nms_threshold=self.nms_threshold,
+            max_detections=self.max_detections
+        )[0]
 
-        # Extract predictions
-        cls_logits = pred['cls_logits']  # [B, C, H, W]
-        bbox_pred = pred['bbox_pred']  # [B, 4, H, W]
-        centerness = pred.get('centerness', None)  # [B, 1, H, W]
-
-        B, C, H, W = cls_logits.shape
-
-        # Apply sigmoid to get probabilities
-        cls_probs = torch.sigmoid(cls_logits)
-
-        # Get objectness scores
-        if centerness is not None:
-            obj_scores = torch.sigmoid(centerness)
-        else:
-            obj_scores = torch.ones(B, 1, H, W, device=cls_logits.device)
-
-        # Flatten spatial dimensions
-        cls_probs = cls_probs.reshape(B, C, -1).permute(0, 2, 1)  # [B, H*W, C]
-        obj_scores = obj_scores.reshape(B, 1, -1).permute(0, 2, 1)  # [B, H*W, 1]
-        bbox_pred = bbox_pred.reshape(B, 4, -1).permute(0, 2, 1)  # [B, H*W, 4]
-
-        # Combine class and objectness scores
-        scores = cls_probs * obj_scores  # [B, H*W, C]
-
-        # Get max class and score for each location
-        max_scores, max_classes = scores.max(dim=2)  # [B, H*W]
-
-        # Filter by confidence
-        mask = max_scores[0] > self.conf_threshold
-        filtered_scores = max_scores[0][mask]
-        filtered_classes = max_classes[0][mask]
-        filtered_boxes = bbox_pred[0][mask]
-
-        # Convert boxes to original image coordinates
         orig_h, orig_w = orig_size
         scale_x = orig_w / self.img_size
         scale_y = orig_h / self.img_size
 
-        # Scale boxes (assuming COCO format [x, y, w, h])
-        # Note: This is simplified - actual conversion depends on anchor point generation
-        scaled_boxes = filtered_boxes.clone()
-        scaled_boxes[:, 0] *= scale_x  # x
-        scaled_boxes[:, 1] *= scale_y  # y
-        scaled_boxes[:, 2] *= scale_x  # w
-        scaled_boxes[:, 3] *= scale_y  # h
+        boxes = decoded['boxes'].clone()
+        boxes[:, [0, 2]] *= scale_x
+        boxes[:, [1, 3]] *= scale_y
 
-        result = {
-            'boxes': scaled_boxes,
-            'labels': filtered_classes,
-            'scores': filtered_scores
+        return {
+            'boxes': boxes,
+            'labels': decoded['labels'],
+            'scores': decoded['scores']
         }
-
-        return result
 
     @torch.no_grad()
     def detect(self, image):
@@ -294,7 +261,9 @@ def main():
         config_path=args.config,
         checkpoint_path=args.checkpoint,
         device=args.device,
-        conf_threshold=args.conf_threshold
+        conf_threshold=args.conf_threshold,
+        nms_threshold=args.nms_threshold,
+        max_detections=args.max_detections
     )
 
     input_path = Path(args.input)

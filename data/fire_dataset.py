@@ -291,6 +291,51 @@ def collate_fn(batch):
     return images, targets
 
 
+def _resolve_split_dir(data_dir, annotation_file, default_split):
+    """
+    Resolve which directory contains the images for a given split.
+
+    The loader expects the caller to pass the parent images directory (e.g. .../images).
+    This helper looks for common split subdirectories such as train/val/test and
+    falls back to the provided data_dir when no split-specific folder exists.
+    """
+    root = Path(data_dir)
+    if not root.exists():
+        raise FileNotFoundError(f"Data directory not found: {root}")
+
+    children = [child for child in root.iterdir() if child.is_dir()]
+
+    split_order = []
+    if annotation_file:
+        ann_name = Path(annotation_file).stem.lower()
+        split_map = {
+            'train': ('train', 'training'),
+            'val': ('val', 'valid', 'validation'),
+            'test': ('test', 'testing')
+        }
+        for split, keywords in split_map.items():
+            if any(keyword in ann_name for keyword in keywords):
+                split_order.append(split)
+                break
+
+    if default_split and default_split not in split_order:
+        split_order.append(default_split)
+
+    for split in split_order:
+        candidate = root / split
+        if candidate.exists():
+            return candidate
+
+        matches = [
+            child for child in children
+            if split in child.name.lower()
+        ]
+        if matches:
+            return matches[0]
+
+    return root
+
+
 def create_dataloaders(
     data_dir,
     train_annotation,
@@ -319,14 +364,12 @@ def create_dataloaders(
     """
     from .augmentations import get_train_transforms, get_val_transforms
 
-    # Infer image directories from annotation file paths
-    # If annotation is at path/to/train/_annotations.coco.json, images are at path/to/train/
-    train_img_dir = Path(train_annotation).parent
-    val_img_dir = Path(val_annotation).parent
+    train_image_dir = _resolve_split_dir(data_dir, train_annotation, 'train')
+    val_image_dir = _resolve_split_dir(data_dir, val_annotation, 'val')
 
     # Create datasets
     train_dataset = FireDetectionDataset(
-        image_dir=train_img_dir,
+        image_dir=train_image_dir,
         annotation_file=train_annotation,
         transform=get_train_transforms(img_size),
         mode='train',
@@ -334,7 +377,7 @@ def create_dataloaders(
     )
 
     val_dataset = FireDetectionDataset(
-        image_dir=val_img_dir,
+        image_dir=val_image_dir,
         annotation_file=val_annotation,
         transform=get_val_transforms(img_size),
         mode='val',
@@ -368,9 +411,10 @@ def create_dataloaders(
 
     # Optional test loader
     if test_annotation is not None:
-        test_img_dir = Path(test_annotation).parent
+        test_image_dir = _resolve_split_dir(data_dir, test_annotation, 'test')
+
         test_dataset = FireDetectionDataset(
-            image_dir=test_img_dir,
+            image_dir=test_image_dir,
             annotation_file=test_annotation,
             transform=get_val_transforms(img_size),
             mode='test',
