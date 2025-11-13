@@ -119,10 +119,12 @@ class FireDetectionHead(nn.Module):
         bias_value = -math.log((1 - prior_prob) / prior_prob)
         nn.init.constant_(self.cls_head[-1].bias, bias_value)
 
-        # CRITICAL: Initialize bbox head bias to negative values
-        # This ensures exp(bbox_pred) starts small (around 1-10 pixels)
-        # exp(-2.3) ≈ 0.1, exp(-1.0) ≈ 0.37, exp(0) = 1
-        nn.init.constant_(self.bbox_head[-1].bias, -2.0)
+        # CRITICAL: Initialize bbox head bias to match target scale
+        # Typical LTRB targets are ~50-100 pixels
+        # exp(3.5) = 33 pixels → after stride normalization (/8) = 4.1
+        # This matches typical targets of 100/8 = 12.5 much better
+        # Previous: bias=-2.0 → 0.135 pixels → 0.017 after /8 (738x mismatch!)
+        nn.init.constant_(self.bbox_head[-1].bias, 3.5)
 
     def forward(self, features, level_idx=0):
         """
