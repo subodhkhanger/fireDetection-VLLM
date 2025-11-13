@@ -135,8 +135,11 @@ class CompositeLoss(nn.Module):
                 # This makes predictions stride-relative (not pixel-absolute)
                 # Target LTRB is in pixels, pred LTRB after exp() is ~0.1-1000
                 # Dividing pred by stride brings them to similar scale as targets/stride
-                pred_ltrb_normalized = pred_ltrb / stride
-                target_ltrb_normalized = target_ltrb / stride
+                # Cast to fp32 for numerical stability (fp16 division can be unstable)
+                pred_ltrb_fp32 = pred_ltrb.float()
+                target_ltrb_fp32 = target_ltrb.float()
+                pred_ltrb_normalized = pred_ltrb_fp32 / float(stride)
+                target_ltrb_normalized = target_ltrb_fp32 / float(stride)
 
                 anchor = anchor_points.reshape(-1, 2)
                 B = bbox_pred.shape[0]

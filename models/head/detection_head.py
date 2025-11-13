@@ -147,12 +147,20 @@ class FireDetectionHead(nn.Module):
         # Bounding box predictions
         bbox_pred = self.bbox_head(x)  # [B, 4, H, W]
 
+        # CRITICAL: Cast to fp32 for numerical stability with exp()
+        # fp16 exp() is highly unstable and can produce inf/nan
+        original_dtype = bbox_pred.dtype
+        bbox_pred = bbox_pred.float()
+
         # Clamp before exp to prevent extreme values
         # Allows bbox sizes from ~0.05 to ~1096 pixels
         bbox_pred = torch.clamp(bbox_pred, min=-3.0, max=7.0)
 
         # Apply exponential to ensure positive box dimensions
         bbox_pred = torch.exp(bbox_pred)
+
+        # Cast back to original dtype for mixed precision training
+        bbox_pred = bbox_pred.to(original_dtype)
 
         # Centerness predictions
         centerness = self.centerness_head(x)  # [B, 1, H, W]
